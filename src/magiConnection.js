@@ -3,11 +3,7 @@ import { chatWithOllama } from "./endpoints/ollama.js";
 
 const activeRequests = new Map();
 
-export function connectToMagi({
-  magiUrl,
-  deviceId,
-  credential,
-}) {
+export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
   if (!magiUrl) {
     throw new Error("MAGI URL is required");
   }
@@ -44,6 +40,22 @@ export function connectToMagi({
     if (message.type === "ready") {
       console.log("PAIRING............. VERIFIED");
       console.log(`DEVICE.............. ${message.deviceId}`);
+
+      const endpoints = [];
+
+      if (ollama?.available) {
+        endpoints.push({
+          endpointId: "ollama-default",
+          provider: "ollama",
+          models: ollama.models,
+        });
+      }
+
+      send(ws, {
+        type: "capabilities",
+        endpoints,
+      });
+
       console.log("");
       console.log("NERV READY");
       return;
@@ -59,9 +71,7 @@ export function connectToMagi({
       return;
     }
 
-    console.log(
-      `MAGI MESSAGE......... ${message.type ?? "UNKNOWN"}`,
-    );
+    console.log(`MAGI MESSAGE......... ${message.type ?? "UNKNOWN"}`);
   });
 
   ws.on("close", (code, reason) => {
@@ -81,21 +91,14 @@ export function connectToMagi({
   });
 
   ws.on("error", (error) => {
-    console.error(
-      `MAGI CONNECTION..... ERROR: ${error.message}`,
-    );
+    console.error(`MAGI CONNECTION..... ERROR: ${error.message}`);
   });
 
   return ws;
 }
 
 async function handleChat(ws, message) {
-  const {
-    requestId,
-    endpointId,
-    model,
-    request,
-  } = message;
+  const { requestId, endpointId, model, request } = message;
 
   if (!requestId) return;
 
@@ -133,9 +136,7 @@ async function handleChat(ws, message) {
 
   activeRequests.set(requestId, controller);
 
-  console.log(
-    `LOCAL REQUEST........ ${model} (${requestId})`,
-  );
+  console.log(`LOCAL REQUEST........ ${model} (${requestId})`);
 
   try {
     const result = await chatWithOllama({
@@ -173,21 +174,15 @@ async function handleChat(ws, message) {
       text: result.text,
     });
 
-    console.log(
-      `LOCAL COMPLETE....... ${model} (${requestId})`,
-    );
+    console.log(`LOCAL COMPLETE....... ${model} (${requestId})`);
   } catch (error) {
     if (controller.signal.aborted) {
-      console.log(
-        `LOCAL CANCELLED...... ${model} (${requestId})`,
-      );
+      console.log(`LOCAL CANCELLED...... ${model} (${requestId})`);
 
       return;
     }
 
-    console.error(
-      `LOCAL ERROR.......... ${model}: ${error.message}`,
-    );
+    console.error(`LOCAL ERROR.......... ${model}: ${error.message}`);
 
     send(ws, {
       type: "error",
@@ -200,8 +195,7 @@ async function handleChat(ws, message) {
 }
 
 function handleCancel(message) {
-  const controller =
-    activeRequests.get(message.requestId);
+  const controller = activeRequests.get(message.requestId);
 
   if (!controller) return;
 
