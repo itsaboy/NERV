@@ -1,5 +1,4 @@
-import { loadConfig, saveConfig } from "./config.js";
-import { pairWithMagi } from "./pairing.js";
+import { loadConfig } from "./config.js";
 
 import { connectToMagi } from "./magiConnection.js";
 import { inspectOllama } from "./endpoints/ollama.js";
@@ -9,52 +8,21 @@ console.log("NERV // NODE ENDPOINT RELAY VERIFICATION");
 console.log("");
 
 const magiUrl = process.env.NERV_MAGI_URL;
-let { deviceId, credential } = await loadConfig();
+const { deviceId, credential } = await loadConfig();
 
 if (!deviceId || !credential) {
-  const pairingCode = process.env.NERV_PAIRING_CODE;
+  console.log("DEVICE.............. NOT PAIRED");
+  console.log("");
+  console.log("Pair this NERV device with MAGI before starting.");
+  console.log("");
+  console.log("Usage: npm run pair -- <PAIRING_CODE>");
+  console.log("");
 
-  if (!pairingCode) {
-    console.log("DEVICE.............. NOT PAIRED");
-    console.log("");
-    console.log(
-      "Set NERV_PAIRING_CODE to a MAGI pairing code and restart NERV.",
-    );
-
-    process.exit(1);
-  }
-
-  console.log("PAIRING............. IN PROGRESS");
-
-  const paired = await pairWithMagi({
-    magiHttpUrl: process.env.NERV_MAGI_HTTP_URL,
-    code: pairingCode,
-    name: process.env.NERV_DEVICE_NAME ?? "NERV Node",
-  });
-
-  deviceId = paired.deviceId;
-  credential = paired.credential;
-
-  await saveConfig({
-    deviceId,
-    credential,
-  });
-
-  console.log("PAIRING............. VERIFIED");
-  console.log(`DEVICE.............. ${deviceId}`);
-  console.log("CREDENTIAL.......... STORED");
+  process.exit(1);
 }
 
 if (!magiUrl) {
   throw new Error("NERV_MAGI_URL is not configured");
-}
-
-if (!deviceId) {
-  throw new Error("NERV_DEVICE_ID is not configured");
-}
-
-if (!credential) {
-  throw new Error("NERV_DEVICE_CREDENTIAL is not configured");
 }
 
 const ollama = await inspectOllama();
