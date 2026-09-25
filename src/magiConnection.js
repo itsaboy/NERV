@@ -26,9 +26,6 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
 
     const url = new URL(magiUrl);
 
-    url.searchParams.set("deviceId", deviceId);
-    url.searchParams.set("credential", credential);
-
     ws = new WebSocket(url);
 
     ws.on("open", () => {
