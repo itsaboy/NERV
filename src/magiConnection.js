@@ -154,7 +154,7 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
 }
 
 async function handleChat(ws, message) {
-  const { requestId, endpointId, model, request } = message;
+  const { requestId, endpointId, model, context, request } = message;
 
   if (!requestId) return;
 
@@ -192,7 +192,10 @@ async function handleChat(ws, message) {
 
   activeRequests.set(requestId, controller);
 
-  console.log(`LOCAL REQUEST........ ${model} (${requestId})`);
+  console.log("");
+  console.log(`LOCAL REQUEST........ ${model}`);
+  console.log(`MAGI SEAT............ ${context?.seat ?? "UNKNOWN"}`);
+  console.log(`MAGI PHASE........... ${formatMagiPhase(context?.phase)}`);
   console.log("");
   console.log("NERV STREAM ────────────────────────────────────────────────");
   console.log("");
@@ -239,6 +242,8 @@ async function handleChat(ws, message) {
     console.log("");
     console.log("────────────────────────────────────────────────────────────");
     console.log("");
+    console.log(`LOCAL COMPLETE....... ${model}`);
+    console.log("");
 
     console.log(`LOCAL COMPLETE....... ${model} (${requestId})`);
   } catch (error) {
@@ -258,6 +263,12 @@ async function handleChat(ws, message) {
   } finally {
     activeRequests.delete(requestId);
   }
+}
+
+function formatMagiPhase(phase) {
+  if (!phase) return "UNKNOWN";
+
+  return phase.replaceAll("_", " ");
 }
 
 function handleCancel(message) {
