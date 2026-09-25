@@ -193,6 +193,9 @@ async function handleChat(ws, message) {
   activeRequests.set(requestId, controller);
 
   console.log(`LOCAL REQUEST........ ${model} (${requestId})`);
+  console.log("");
+  console.log("NERV STREAM ────────────────────────────────────────────────");
+  console.log("");
 
   try {
     const result = await chatWithOllama({
@@ -202,6 +205,8 @@ async function handleChat(ws, message) {
       signal: controller.signal,
 
       onChunk: (chunk) => {
+        process.stdout.write(chunk);
+
         send(ws, {
           type: "chunk",
           requestId,
@@ -229,6 +234,11 @@ async function handleChat(ws, message) {
       requestId,
       text: result.text,
     });
+
+    process.stdout.write("\n");
+    console.log("");
+    console.log("────────────────────────────────────────────────────────────");
+    console.log("");
 
     console.log(`LOCAL COMPLETE....... ${model} (${requestId})`);
   } catch (error) {
