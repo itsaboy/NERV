@@ -102,6 +102,13 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
         })`,
       );
 
+      if (code === 1008) {
+        console.error("NERV AUTH............ FAILED");
+        console.error("ACTION............... CHECK CREDENTIALS OR PAIR AGAIN");
+        stopped = true;
+        return;
+      }
+
       if (!stopped) {
         scheduleReconnect();
       }
@@ -247,7 +254,6 @@ async function handleChat(ws, message) {
     console.log("");
     console.log(`LOCAL COMPLETE....... ${model}`);
     console.log("");
-
   } catch (error) {
     if (controller.signal.aborted) {
       console.log(`LOCAL CANCELLED...... ${model} (${requestId})`);
