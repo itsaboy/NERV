@@ -32,6 +32,12 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
       reconnectAttempts = 0;
 
       console.log("MAGI CONNECTION..... CONNECTED");
+
+      send(ws, {
+        type: "authenticate",
+        deviceId,
+        credential,
+      });
     });
 
     ws.on("message", async (data) => {
@@ -242,7 +248,6 @@ async function handleChat(ws, message) {
     console.log(`LOCAL COMPLETE....... ${model}`);
     console.log("");
 
-    console.log(`LOCAL COMPLETE....... ${model} (${requestId})`);
   } catch (error) {
     if (controller.signal.aborted) {
       console.log(`LOCAL CANCELLED...... ${model} (${requestId})`);
