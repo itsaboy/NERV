@@ -1,5 +1,6 @@
 import { pairWithMagi } from "./pairing.js";
 import { saveConfig } from "./config.js";
+import { getMagiUrls } from "./magiUrls.js";
 
 const code = process.argv[2];
 
@@ -12,11 +13,7 @@ if (!code) {
   process.exit(1);
 }
 
-const magiHttpUrl = process.env.NERV_MAGI_HTTP_URL;
-
-if (!magiHttpUrl) {
-  throw new Error("NERV_MAGI_HTTP_URL is not configured");
-}
+const { httpUrl: magiHttpUrl } = getMagiUrls();
 
 console.log("");
 console.log("NERV // NODE ENDPOINT RELAY VERIFICATION");

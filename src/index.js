@@ -1,5 +1,5 @@
 import { loadConfig } from "./config.js";
-
+import { getMagiUrls } from "./magiUrls.js";
 import { connectToMagi } from "./magiConnection.js";
 import { inspectOllama } from "./endpoints/ollama.js";
 
@@ -7,7 +7,7 @@ console.log("");
 console.log("NERV // NODE ENDPOINT RELAY VERIFICATION");
 console.log("");
 
-const magiUrl = process.env.NERV_MAGI_URL;
+const { wsUrl: magiUrl } = getMagiUrls();
 const { deviceId, credential } = await loadConfig();
 
 if (!deviceId || !credential) {
@@ -19,10 +19,6 @@ if (!deviceId || !credential) {
   console.log("");
 
   process.exit(1);
-}
-
-if (!magiUrl) {
-  throw new Error("NERV_MAGI_URL is not configured");
 }
 
 const ollama = await inspectOllama();
