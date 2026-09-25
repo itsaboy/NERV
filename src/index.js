@@ -1,3 +1,5 @@
+import "./env.js";
+
 import { loadConfig } from "./config.js";
 import { getMagiUrls } from "./magiUrls.js";
 import { connectToMagi } from "./magiConnection.js";

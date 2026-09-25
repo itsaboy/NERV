@@ -1,3 +1,5 @@
+import "./env.js";
+
 import { pairWithMagi } from "./pairing.js";
 import { saveConfig } from "./config.js";
 import { getMagiUrls } from "./magiUrls.js";
