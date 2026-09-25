@@ -16,85 +16,141 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
     throw new Error("NERV device credential is required");
   }
 
-  const url = new URL(magiUrl);
+  let ws = null;
+  let reconnectTimer = null;
+  let reconnectAttempts = 0;
+  let stopped = false;
 
-  url.searchParams.set("deviceId", deviceId);
-  url.searchParams.set("credential", credential);
+  function connect() {
+    if (stopped) return;
 
-  const ws = new WebSocket(url);
+    const url = new URL(magiUrl);
 
-  ws.on("open", () => {
-    console.log("MAGI CONNECTION..... CONNECTED");
-  });
+    url.searchParams.set("deviceId", deviceId);
+    url.searchParams.set("credential", credential);
 
-  ws.on("message", async (data) => {
-    let message;
+    ws = new WebSocket(url);
 
-    try {
-      message = JSON.parse(data.toString());
-    } catch {
-      console.error("MAGI MESSAGE......... INVALID JSON");
-      return;
-    }
+    ws.on("open", () => {
+      reconnectAttempts = 0;
 
-    if (message.type === "ready") {
-      console.log("PAIRING............. VERIFIED");
-      console.log(`DEVICE.............. ${message.deviceId}`);
+      console.log("MAGI CONNECTION..... CONNECTED");
+    });
 
-      const endpoints = [];
+    ws.on("message", async (data) => {
+      let message;
 
-      if (ollama?.available) {
-        endpoints.push({
-          endpointId: "ollama-default",
-          provider: "ollama",
-          models: ollama.models,
-        });
+      try {
+        message = JSON.parse(data.toString());
+      } catch {
+        console.error("MAGI MESSAGE......... INVALID JSON");
+        return;
       }
 
-      send(ws, {
-        type: "capabilities",
-        endpoints,
-      });
+      if (message.type === "ready") {
+        console.log("PAIRING............. VERIFIED");
+        console.log(`DEVICE.............. ${message.deviceId}`);
 
-      console.log("");
-      console.log("NERV READY");
-      return;
+        const endpoints = [];
+
+        if (ollama?.available) {
+          endpoints.push({
+            endpointId: "ollama-default",
+            provider: "ollama",
+            models: ollama.models,
+          });
+        }
+
+        send(ws, {
+          type: "capabilities",
+          endpoints,
+        });
+
+        console.log("");
+        console.log("NERV READY");
+        return;
+      }
+
+      if (message.type === "chat") {
+        await handleChat(ws, message);
+        return;
+      }
+
+      if (message.type === "cancel") {
+        handleCancel(message);
+        return;
+      }
+
+      console.log(`MAGI MESSAGE......... ${message.type ?? "UNKNOWN"}`);
+    });
+
+    ws.on("close", (code, reason) => {
+      for (const controller of activeRequests.values()) {
+        controller.abort();
+      }
+
+      activeRequests.clear();
+
+      const reasonText = reason.toString();
+
+      console.log(
+        `MAGI CONNECTION..... CLOSED (${code}${
+          reasonText ? `: ${reasonText}` : ""
+        })`,
+      );
+
+      if (!stopped) {
+        scheduleReconnect();
+      }
+    });
+
+    ws.on("error", (error) => {
+      console.error(`MAGI CONNECTION..... ERROR: ${error.message}`);
+    });
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer || stopped) return;
+
+    reconnectAttempts += 1;
+
+    const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), 30000);
+
+    console.log(`MAGI RECONNECT....... ${delay / 1000}s`);
+
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  }
+
+  function stop() {
+    stopped = true;
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
     }
 
-    if (message.type === "chat") {
-      await handleChat(ws, message);
-      return;
-    }
-
-    if (message.type === "cancel") {
-      handleCancel(message);
-      return;
-    }
-
-    console.log(`MAGI MESSAGE......... ${message.type ?? "UNKNOWN"}`);
-  });
-
-  ws.on("close", (code, reason) => {
     for (const controller of activeRequests.values()) {
       controller.abort();
     }
 
     activeRequests.clear();
 
-    const reasonText = reason.toString();
+    if (
+      ws?.readyState === WebSocket.OPEN ||
+      ws?.readyState === WebSocket.CONNECTING
+    ) {
+      ws.close();
+    }
+  }
 
-    console.log(
-      `MAGI CONNECTION..... CLOSED (${code}${
-        reasonText ? `: ${reasonText}` : ""
-      })`,
-    );
-  });
+  connect();
 
-  ws.on("error", (error) => {
-    console.error(`MAGI CONNECTION..... ERROR: ${error.message}`);
-  });
-
-  return ws;
+  return {
+    stop,
+  };
 }
 
 async function handleChat(ws, message) {
