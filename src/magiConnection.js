@@ -2,9 +2,16 @@ import WebSocket from "ws";
 import { chatWithOllama } from "./endpoints/ollama.js";
 
 const activeRequests = new Map();
-const AUTH_TIMEOUT_MS = 10_000;
 
-export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
+const AUTH_TIMEOUT_MS = 10_000;
+const CAPABILITY_REFRESH_MS = 5_000;
+
+export function connectToMagi({
+  magiUrl,
+  deviceId,
+  credential,
+  inspectOllama,
+}) {
   if (!magiUrl) {
     throw new Error("MAGI URL is required");
   }
@@ -17,9 +24,15 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
     throw new Error("NERV device credential is required");
   }
 
+  if (typeof inspectOllama !== "function") {
+    throw new Error("Ollama inspection function is required");
+  }
+
   let ws = null;
   let reconnectTimer = null;
   let reconnectAttempts = 0;
+  let capabilityTimer = null;
+  let lastCapabilitiesSignature = null;
   let stopped = false;
 
   function connect() {
@@ -89,20 +102,20 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
         console.log("PAIRING............. VERIFIED");
         console.log(`DEVICE.............. ${message.deviceId}`);
 
-        const endpoints = [];
+        stopCapabilityWatcher();
 
-        if (ollama?.available) {
-          endpoints.push({
-            endpointId: "ollama-default",
-            provider: "ollama",
-            models: ollama.models,
-          });
+        lastCapabilitiesSignature = null;
+
+        await refreshCapabilities(connection);
+
+        if (
+          !stopped &&
+          authenticated &&
+          connection === ws &&
+          connection.readyState === WebSocket.OPEN
+        ) {
+          startCapabilityWatcher(connection);
         }
-
-        send(connection, {
-          type: "capabilities",
-          endpoints,
-        });
 
         console.log("");
         console.log("NERV READY");
@@ -137,10 +150,12 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
         })`,
       );
 
-      // Ignore lifecycle events from an obsolete connection.
       if (connection !== ws) {
         return;
       }
+
+      stopCapabilityWatcher();
+      lastCapabilitiesSignature = null;
 
       abortActiveRequests();
 
@@ -176,6 +191,76 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
     }, delay);
   }
 
+  async function refreshCapabilities(connection) {
+    if (
+      stopped ||
+      connection !== ws ||
+      connection.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    const ollama = await inspectOllama();
+
+    if (
+      stopped ||
+      connection !== ws ||
+      connection.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    const endpoints = [];
+
+    if (ollama.available) {
+      endpoints.push({
+        endpointId: "ollama-default",
+        provider: "ollama",
+        models: [...ollama.models].sort(),
+      });
+    }
+
+    const signature = JSON.stringify(endpoints);
+
+    if (signature === lastCapabilitiesSignature) {
+      return;
+    }
+
+    lastCapabilitiesSignature = signature;
+
+    send(connection, {
+      type: "capabilities",
+      endpoints,
+    });
+
+    if (ollama.available) {
+      console.log(
+        `LOCAL CAPABILITIES... OLLAMA / ${ollama.models.length} MODEL${
+          ollama.models.length === 1 ? "" : "S"
+        }`,
+      );
+    } else {
+      console.log("LOCAL CAPABILITIES... OLLAMA UNAVAILABLE");
+    }
+  }
+
+  function startCapabilityWatcher(connection) {
+    if (capabilityTimer || stopped) return;
+
+    capabilityTimer = setInterval(() => {
+      refreshCapabilities(connection).catch((error) => {
+        console.error(`CAPABILITY REFRESH... ERROR: ${error.message}`);
+      });
+    }, CAPABILITY_REFRESH_MS);
+  }
+
+  function stopCapabilityWatcher() {
+    if (!capabilityTimer) return;
+
+    clearInterval(capabilityTimer);
+    capabilityTimer = null;
+  }
+
   function abortActiveRequests() {
     for (const controller of activeRequests.values()) {
       controller.abort();
@@ -191,6 +276,9 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+
+    stopCapabilityWatcher();
+    lastCapabilitiesSignature = null;
 
     abortActiveRequests();
 

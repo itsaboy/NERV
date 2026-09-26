@@ -43,5 +43,5 @@ connectToMagi({
   magiUrl,
   deviceId,
   credential,
-  ollama,
+  inspectOllama,
 });
