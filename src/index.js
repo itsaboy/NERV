@@ -4,6 +4,7 @@ import { loadConfig } from "./config.js";
 import { getMagiUrls } from "./magiUrls.js";
 import { connectToMagi } from "./magiConnection.js";
 import { inspectOllama } from "./endpoints/ollama.js";
+import { logEvent } from "./logger.js";
 
 console.log("");
 console.log("NERV // NODE ENDPOINT RELAY VERIFICATION");
@@ -26,15 +27,20 @@ if (!deviceId || !credential) {
 const ollama = await inspectOllama();
 
 if (ollama.available) {
-  console.log("OLLAMA.............. DETECTED");
-  console.log(`LOCAL MODELS........ ${ollama.models.length}`);
+  logEvent("OLLAMA ONLINE", {
+    primary: "ollama-default",
+    models: ollama.models.length,
+  });
 
   for (const model of ollama.models) {
-    console.log(`  └─ ${model}`);
+    console.log(`               └─ ${model}`);
   }
 } else {
-  console.log("OLLAMA.............. NOT DETECTED");
-  console.log("LOCAL MODELS........ 0");
+  logEvent("OLLAMA OFFLINE", {
+    primary: "ollama-default",
+    models: 0,
+    error: ollama.error,
+  });
 }
 
 console.log("");

@@ -1,5 +1,12 @@
 import WebSocket from "ws";
 import { chatWithOllama } from "./endpoints/ollama.js";
+import {
+  formatDuration,
+  logError,
+  logEvent,
+  logStreamFooter,
+  logStreamHeader,
+} from "./logger.js";
 
 const activeRequests = new Map();
 
@@ -54,7 +61,9 @@ export function connectToMagi({
     }
 
     connection.on("open", () => {
-      console.log("MAGI CONNECTION..... CONNECTED");
+      logEvent("MAGI CONNECTED", {
+        primary: "SOCKET OPEN",
+      });
 
       send(connection, {
         type: "authenticate",
@@ -74,7 +83,9 @@ export function connectToMagi({
           return;
         }
 
-        console.error("MAGI AUTH............ TIMEOUT");
+        logError("MAGI AUTH TIMEOUT", {
+          primary: `${AUTH_TIMEOUT_MS / 1000}s`,
+        });
 
         connection.terminate();
       }, AUTH_TIMEOUT_MS);
@@ -99,8 +110,10 @@ export function connectToMagi({
         clearAuthTimer();
         reconnectAttempts = 0;
 
-        console.log("PAIRING............. VERIFIED");
-        console.log(`DEVICE.............. ${message.deviceId}`);
+        logEvent("MAGI AUTHENTICATED", {
+          primary: "YES",
+          device: message.deviceId,
+        });
 
         stopCapabilityWatcher();
 
@@ -144,12 +157,6 @@ export function connectToMagi({
 
       const reasonText = reason.toString();
 
-      console.log(
-        `MAGI CONNECTION..... CLOSED (${code}${
-          reasonText ? `: ${reasonText}` : ""
-        })`,
-      );
-
       if (connection !== ws) {
         return;
       }
@@ -157,11 +164,22 @@ export function connectToMagi({
       stopCapabilityWatcher();
       lastCapabilitiesSignature = null;
 
+      const activeRequestCount = activeRequests.size;
+
+      logEvent("MAGI DISCONNECTED", {
+        primary: code,
+        reason: reasonText || "NONE",
+        "active requests": activeRequestCount,
+      });
+
       abortActiveRequests();
 
       if (code === 1008) {
-        console.error("NERV AUTH............ FAILED");
-        console.error("ACTION............... CHECK CREDENTIALS OR PAIR AGAIN");
+        logError("NERV AUTH FAILED", {
+          primary: "CREDENTIAL REJECTED",
+          action: "CHECK CREDENTIALS OR PAIR AGAIN",
+        });
+
         stopped = true;
         return;
       }
@@ -172,7 +190,9 @@ export function connectToMagi({
     });
 
     connection.on("error", (error) => {
-      console.error(`MAGI CONNECTION..... ERROR: ${error.message}`);
+      logError("MAGI CONNECTION ERROR", {
+        primary: error.message,
+      });
     });
   }
 
@@ -183,7 +203,10 @@ export function connectToMagi({
 
     const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), 30000);
 
-    console.log(`MAGI RECONNECT....... ${delay / 1000}s`);
+    logEvent("MAGI RECONNECT", {
+      primary: `ATTEMPT ${reconnectAttempts}`,
+      "next attempt": formatDuration(delay),
+    });
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
@@ -226,6 +249,30 @@ export function connectToMagi({
       return;
     }
 
+    let previousEndpoints = [];
+
+    if (lastCapabilitiesSignature) {
+      try {
+        previousEndpoints = JSON.parse(lastCapabilitiesSignature);
+      } catch {
+        previousEndpoints = [];
+      }
+    }
+
+    const previousModels = new Set(
+      previousEndpoints.flatMap((endpoint) => endpoint.models ?? []),
+    );
+
+    const currentModels = new Set(ollama.available ? ollama.models : []);
+
+    const addedModels = [...currentModels].filter(
+      (model) => !previousModels.has(model),
+    );
+
+    const removedModels = [...previousModels].filter(
+      (model) => !currentModels.has(model),
+    );
+
     lastCapabilitiesSignature = signature;
 
     send(connection, {
@@ -234,13 +281,18 @@ export function connectToMagi({
     });
 
     if (ollama.available) {
-      console.log(
-        `LOCAL CAPABILITIES... OLLAMA / ${ollama.models.length} MODEL${
-          ollama.models.length === 1 ? "" : "S"
-        }`,
-      );
+      logEvent("CAPABILITIES UPDATED", {
+        primary: "OLLAMA",
+        models: ollama.models.length,
+        added: addedModels.length ? addedModels.join(", ") : "NONE",
+        removed: removedModels.length ? removedModels.join(", ") : "NONE",
+      });
     } else {
-      console.log("LOCAL CAPABILITIES... OLLAMA UNAVAILABLE");
+      logEvent("CAPABILITIES UPDATED", {
+        primary: "OLLAMA UNAVAILABLE",
+        models: 0,
+        removed: removedModels.length ? removedModels.join(", ") : "NONE",
+      });
     }
   }
 
@@ -331,16 +383,22 @@ async function handleChat(ws, message) {
   }
 
   const controller = new AbortController();
+  const requestedAt = performance.now();
+  let startedAt = null;
 
   activeRequests.set(requestId, controller);
 
   console.log("");
-  console.log(`LOCAL REQUEST........ ${model}`);
-  console.log(`MAGI SEAT............ ${context?.seat ?? "UNKNOWN"}`);
-  console.log(`MAGI PHASE........... ${formatMagiPhase(context?.phase)}`);
-  console.log("");
-  console.log("NERV STREAM ────────────────────────────────────────────────");
-  console.log("");
+
+  logEvent("LOCAL REQUEST", {
+    primary: model,
+    "request id": requestId,
+    endpoint: endpointId,
+    "magi seat": context?.seat ?? "UNKNOWN",
+    "magi phase": formatMagiPhase(context?.phase),
+  });
+
+  logStreamHeader();
 
   try {
     const result = await chatWithOllama({
@@ -350,6 +408,18 @@ async function handleChat(ws, message) {
       signal: controller.signal,
 
       onStarted: () => {
+        if (startedAt !== null) {
+          return;
+        }
+
+        startedAt = performance.now();
+
+        logEvent("INFERENCE STARTED", {
+          primary: model,
+          startup: formatDuration(startedAt - requestedAt),
+          "request id": requestId,
+        });
+
         send(ws, {
           type: "started",
           requestId,
@@ -387,20 +457,57 @@ async function handleChat(ws, message) {
       text: result.text,
     });
 
-    process.stdout.write("\n");
-    console.log("");
-    console.log("────────────────────────────────────────────────────────────");
-    console.log("");
-    console.log(`LOCAL COMPLETE....... ${model}`);
+    const completedAt = performance.now();
+
+    logStreamFooter();
+
+    logEvent("LOCAL COMPLETE", {
+      primary: model,
+      "request id": requestId,
+      duration: formatDuration(completedAt - requestedAt),
+      startup:
+        startedAt !== null
+          ? formatDuration(startedAt - requestedAt)
+          : "NOT REPORTED",
+      generation:
+        startedAt !== null ? formatDuration(completedAt - startedAt) : "N/A",
+      "input tokens": result.usage?.inputTokens,
+      "output tokens": result.usage?.outputTokens,
+      "total tokens": result.usage?.totalTokens,
+    });
+
     console.log("");
   } catch (error) {
     if (controller.signal.aborted) {
-      console.log(`LOCAL CANCELLED...... ${model} (${requestId})`);
+      const cancelledAt = performance.now();
+
+      logStreamFooter();
+
+      logEvent("LOCAL CANCELLED", {
+        primary: model,
+        "request id": requestId,
+        duration: formatDuration(cancelledAt - requestedAt),
+        startup:
+          startedAt !== null
+            ? formatDuration(startedAt - requestedAt)
+            : "NOT STARTED",
+        "magi seat": context?.seat ?? "UNKNOWN",
+        "magi phase": formatMagiPhase(context?.phase),
+      });
 
       return;
     }
 
-    console.error(`LOCAL ERROR.......... ${model}: ${error.message}`);
+    const failedAt = performance.now();
+
+    logStreamFooter();
+
+    logError("LOCAL ERROR", {
+      primary: model,
+      "request id": requestId,
+      duration: formatDuration(failedAt - requestedAt),
+      error: error.message,
+    });
 
     sendError(
       ws,
