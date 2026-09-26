@@ -4,6 +4,11 @@ import { inspectLmStudio, chatWithLmStudio } from "./lmStudio.js";
 
 import { inspectLlamaCpp, chatWithLlamaCpp } from "./llamaCpp.js";
 
+import {
+  inspectOpenAiCompatible,
+  chatWithOpenAiCompatible,
+} from "./openAiCompatible.js";
+
 export const localEndpoints = [
   {
     endpointId: "ollama-default",
@@ -22,6 +27,12 @@ export const localEndpoints = [
     provider: "llamacpp",
     inspect: inspectLlamaCpp,
     chat: chatWithLlamaCpp,
+  },
+  {
+    endpointId: "openai-compatible-default",
+    provider: "openai-compatible",
+    inspect: inspectOpenAiCompatible,
+    chat: chatWithOpenAiCompatible,
   },
 ];
 
