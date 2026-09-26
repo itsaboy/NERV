@@ -17,9 +17,7 @@ export async function inspectOllama() {
     const data = await response.json();
 
     const models = Array.isArray(data.models)
-      ? data.models
-          .map((model) => model.name)
-          .filter(Boolean)
+      ? data.models.map((model) => model.name).filter(Boolean)
       : [];
 
     return {
@@ -42,6 +40,7 @@ export async function chatWithOllama({
   input,
   signal,
   onChunk,
+  onStarted,
 }) {
   const messages = [];
 
@@ -73,9 +72,7 @@ export async function chatWithOllama({
   if (!response.ok) {
     const body = await response.text();
 
-    throw new Error(
-      `Ollama request failed (${response.status}): ${body}`,
-    );
+    throw new Error(`Ollama request failed (${response.status}): ${body}`);
   }
 
   if (!response.body) {
@@ -88,6 +85,13 @@ export async function chatWithOllama({
   let buffer = "";
   let fullText = "";
   let finalResponse = null;
+  let started = false;
+
+  const markStarted = () => {
+    if (started) return;
+    started = true;
+    onStarted?.();
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -107,6 +111,11 @@ export async function chatWithOllama({
       const data = JSON.parse(line);
 
       const chunk = data.message?.content;
+      const thinking = data.message?.thinking;
+
+      if (chunk || thinking) {
+        markStarted();
+      }
 
       if (chunk) {
         fullText += chunk;
@@ -123,6 +132,11 @@ export async function chatWithOllama({
     const data = JSON.parse(buffer);
 
     const chunk = data.message?.content;
+    const thinking = data.message?.thinking;
+
+    if (chunk || thinking) {
+      markStarted();
+    }
 
     if (chunk) {
       fullText += chunk;
@@ -138,15 +152,12 @@ export async function chatWithOllama({
     text: fullText,
     usage: finalResponse
       ? {
-          inputTokens:
-            finalResponse.prompt_eval_count ?? null,
-          outputTokens:
-            finalResponse.eval_count ?? null,
+          inputTokens: finalResponse.prompt_eval_count ?? null,
+          outputTokens: finalResponse.eval_count ?? null,
           totalTokens:
             typeof finalResponse.prompt_eval_count === "number" &&
             typeof finalResponse.eval_count === "number"
-              ? finalResponse.prompt_eval_count +
-                finalResponse.eval_count
+              ? finalResponse.prompt_eval_count + finalResponse.eval_count
               : null,
         }
       : null,

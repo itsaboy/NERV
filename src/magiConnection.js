@@ -349,6 +349,13 @@ async function handleChat(ws, message) {
       input: request?.input ?? "",
       signal: controller.signal,
 
+      onStarted: () => {
+        send(ws, {
+          type: "started",
+          requestId,
+        });
+      },
+
       onChunk: (chunk) => {
         process.stdout.write(chunk);
 
