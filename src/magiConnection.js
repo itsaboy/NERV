@@ -1,17 +1,15 @@
 import WebSocket from "ws";
-import { chatWithOllama } from "./endpoints/ollama.js";
+
+import { getLocalEndpoint, localEndpoints } from "./endpoints/index.js";
+
 import { formatDuration, logError, logEvent } from "./logger.js";
 
 const activeRequests = new Map();
+
 const AUTH_TIMEOUT_MS = 10_000;
 const CAPABILITY_REFRESH_MS = 5_000;
 
-export function connectToMagi({
-  magiUrl,
-  deviceId,
-  credential,
-  inspectOllama,
-}) {
+export function connectToMagi({ magiUrl, deviceId, credential }) {
   if (!magiUrl) {
     throw new Error("MAGI URL is required");
   }
@@ -22,10 +20,6 @@ export function connectToMagi({
 
   if (!credential) {
     throw new Error("NERV device credential is required");
-  }
-
-  if (typeof inspectOllama !== "function") {
-    throw new Error("Ollama inspection function is required");
   }
 
   let ws = null;
@@ -207,6 +201,30 @@ export function connectToMagi({
     }, delay);
   }
 
+  async function inspectLocalEndpoints() {
+    return Promise.all(
+      localEndpoints.map(async (endpoint) => {
+        try {
+          const inspection = await endpoint.inspect();
+
+          return {
+            endpoint,
+            inspection,
+          };
+        } catch (error) {
+          return {
+            endpoint,
+            inspection: {
+              available: false,
+              models: [],
+              error: error.message,
+            },
+          };
+        }
+      }),
+    );
+  }
+
   async function refreshCapabilities(connection) {
     if (
       stopped ||
@@ -216,7 +234,7 @@ export function connectToMagi({
       return;
     }
 
-    const ollama = await inspectOllama();
+    const inspections = await inspectLocalEndpoints();
 
     if (
       stopped ||
@@ -226,15 +244,14 @@ export function connectToMagi({
       return;
     }
 
-    const endpoints = [];
-
-    if (ollama.available) {
-      endpoints.push({
-        endpointId: "ollama-default",
-        provider: "ollama",
-        models: [...ollama.models].sort(),
-      });
-    }
+    const endpoints = inspections
+      .filter(({ inspection }) => inspection.available)
+      .map(({ endpoint, inspection }) => ({
+        endpointId: endpoint.endpointId,
+        provider: endpoint.provider,
+        models: [...inspection.models].sort(),
+      }))
+      .sort((a, b) => a.endpointId.localeCompare(b.endpointId));
 
     const signature = JSON.stringify(endpoints);
 
@@ -252,20 +269,6 @@ export function connectToMagi({
       }
     }
 
-    const previousModels = new Set(
-      previousEndpoints.flatMap((endpoint) => endpoint.models ?? []),
-    );
-
-    const currentModels = new Set(ollama.available ? ollama.models : []);
-
-    const addedModels = [...currentModels].filter(
-      (model) => !previousModels.has(model),
-    );
-
-    const removedModels = [...previousModels].filter(
-      (model) => !currentModels.has(model),
-    );
-
     lastCapabilitiesSignature = signature;
 
     send(connection, {
@@ -273,19 +276,43 @@ export function connectToMagi({
       endpoints,
     });
 
-    if (ollama.available) {
-      logEvent("CAPABILITIES UPDATED", {
-        primary: "OLLAMA",
-        models: ollama.models.length,
-        added: addedModels.length ? addedModels.join(", ") : "NONE",
-        removed: removedModels.length ? removedModels.join(", ") : "NONE",
-      });
-    } else {
-      logEvent("CAPABILITIES UPDATED", {
-        primary: "OLLAMA UNAVAILABLE",
-        models: 0,
-        removed: removedModels.length ? removedModels.join(", ") : "NONE",
-      });
+    for (const { endpoint, inspection } of inspections) {
+      const previousEndpoint = previousEndpoints.find(
+        (item) => item.endpointId === endpoint.endpointId,
+      );
+
+      const previousModels = new Set(previousEndpoint?.models ?? []);
+
+      const currentModels = new Set(
+        inspection.available ? inspection.models : [],
+      );
+
+      const addedModels = [...currentModels].filter(
+        (model) => !previousModels.has(model),
+      );
+
+      const removedModels = [...previousModels].filter(
+        (model) => !currentModels.has(model),
+      );
+
+      const providerLabel = endpoint.provider.toUpperCase();
+
+      if (inspection.available) {
+        logEvent("CAPABILITIES UPDATED", {
+          primary: providerLabel,
+          endpoint: endpoint.endpointId,
+          models: inspection.models.length,
+          added: addedModels.length ? addedModels.join(", ") : "NONE",
+          removed: removedModels.length ? removedModels.join(", ") : "NONE",
+        });
+      } else {
+        logEvent("CAPABILITIES UPDATED", {
+          primary: `${providerLabel} UNAVAILABLE`,
+          endpoint: endpoint.endpointId,
+          models: 0,
+          removed: removedModels.length ? removedModels.join(", ") : "NONE",
+        });
+      }
     }
   }
 
@@ -294,7 +321,9 @@ export function connectToMagi({
 
     capabilityTimer = setInterval(() => {
       refreshCapabilities(connection).catch((error) => {
-        console.error(`CAPABILITY REFRESH... ERROR: ${error.message}`);
+        logError("CAPABILITY REFRESH ERROR", {
+          primary: error.message,
+        });
       });
     }, CAPABILITY_REFRESH_MS);
   }
@@ -347,7 +376,9 @@ async function handleChat(ws, message) {
 
   if (!requestId) return;
 
-  if (endpointId !== "ollama-default") {
+  const endpoint = getLocalEndpoint(endpointId);
+
+  if (!endpoint) {
     sendError(
       ws,
       requestId,
@@ -377,6 +408,7 @@ async function handleChat(ws, message) {
 
   const controller = new AbortController();
   const requestedAt = performance.now();
+
   let startedAt = null;
 
   activeRequests.set(requestId, controller);
@@ -385,12 +417,13 @@ async function handleChat(ws, message) {
     primary: model,
     "request id": requestId,
     endpoint: endpointId,
+    provider: endpoint.provider.toUpperCase(),
     "magi seat": context?.seat ?? "UNKNOWN",
     "magi phase": formatMagiPhase(context?.phase),
   });
 
   try {
-    const result = await chatWithOllama({
+    const result = await endpoint.chat({
       model,
       instructions: request?.instructions ?? "",
       input: request?.input ?? "",
@@ -405,6 +438,7 @@ async function handleChat(ws, message) {
 
         logEvent("INFERENCE STARTED", {
           primary: model,
+          provider: endpoint.provider.toUpperCase(),
           startup: formatDuration(startedAt - requestedAt),
           "request id": requestId,
         });
@@ -428,7 +462,7 @@ async function handleChat(ws, message) {
       type: "metadata",
       requestId,
       metadata: {
-        finishReason: "stop",
+        finishReason: result.finishReason ?? "stop",
         usage: result.usage
           ? {
               ...result.usage,
@@ -449,6 +483,7 @@ async function handleChat(ws, message) {
     logEvent("LOCAL COMPLETE", {
       primary: model,
       "request id": requestId,
+      provider: endpoint.provider.toUpperCase(),
       duration: formatDuration(completedAt - requestedAt),
       startup:
         startedAt !== null
@@ -458,6 +493,7 @@ async function handleChat(ws, message) {
         startedAt !== null ? formatDuration(completedAt - startedAt) : "N/A",
       "input tokens": result.usage?.inputTokens,
       "output tokens": result.usage?.outputTokens,
+      "reasoning tokens": result.usage?.reasoningTokens,
       "total tokens": result.usage?.totalTokens,
     });
   } catch (error) {
@@ -467,6 +503,7 @@ async function handleChat(ws, message) {
       logEvent("LOCAL CANCELLED", {
         primary: model,
         "request id": requestId,
+        provider: endpoint.provider.toUpperCase(),
         duration: formatDuration(cancelledAt - requestedAt),
         startup:
           startedAt !== null
@@ -484,6 +521,7 @@ async function handleChat(ws, message) {
     logError("LOCAL ERROR", {
       primary: model,
       "request id": requestId,
+      provider: endpoint.provider.toUpperCase(),
       duration: formatDuration(failedAt - requestedAt),
       error: error.message,
     });

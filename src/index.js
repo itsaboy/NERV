@@ -3,7 +3,7 @@ import "./env.js";
 import { loadConfig } from "./config.js";
 import { getMagiUrls } from "./magiUrls.js";
 import { connectToMagi } from "./magiConnection.js";
-import { inspectOllama } from "./endpoints/ollama.js";
+import { localEndpoints } from "./endpoints/index.js";
 import { logEvent } from "./logger.js";
 
 console.log("");
@@ -24,30 +24,33 @@ if (!deviceId || !credential) {
   process.exit(1);
 }
 
-const ollama = await inspectOllama();
+for (const endpoint of localEndpoints) {
+  const inspection = await endpoint.inspect();
 
-if (ollama.available) {
-  logEvent("OLLAMA ONLINE", {
-    primary: "ollama-default",
-    models: ollama.models.length,
-  });
+  const providerLabel = endpoint.provider.toUpperCase();
 
-  for (const model of ollama.models) {
-    console.log(`               └─ ${model}`);
+  if (inspection.available) {
+    logEvent(`${providerLabel} ONLINE`, {
+      primary: endpoint.endpointId,
+      models: inspection.models.length,
+    });
+
+    for (const model of inspection.models) {
+      console.log(`               └─ ${model}`);
+    }
+  } else {
+    logEvent(`${providerLabel} OFFLINE`, {
+      primary: endpoint.endpointId,
+      models: 0,
+      error: inspection.error,
+    });
   }
-} else {
-  logEvent("OLLAMA OFFLINE", {
-    primary: "ollama-default",
-    models: 0,
-    error: ollama.error,
-  });
-}
 
-console.log("");
+  console.log("");
+}
 
 connectToMagi({
   magiUrl,
   deviceId,
   credential,
-  inspectOllama,
 });
