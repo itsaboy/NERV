@@ -56,17 +56,4 @@ export function logError(label, details = {}) {
   }
 }
 
-export function logStreamHeader() {
-  console.log("");
-  console.log("NERV STREAM ────────────────────────────────────────────────");
-  console.log("");
-}
-
-export function logStreamFooter() {
-  process.stdout.write("\n");
-  console.log("");
-  console.log("────────────────────────────────────────────────────────────");
-  console.log("");
-}
-
 export { formatDuration };

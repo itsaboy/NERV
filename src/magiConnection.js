@@ -4,12 +4,9 @@ import {
   formatDuration,
   logError,
   logEvent,
-  logStreamFooter,
-  logStreamHeader,
 } from "./logger.js";
 
 const activeRequests = new Map();
-let consoleStreamOwner = null;
 const AUTH_TIMEOUT_MS = 10_000;
 const CAPABILITY_REFRESH_MS = 5_000;
 
@@ -319,7 +316,6 @@ export function connectToMagi({
     }
 
     activeRequests.clear();
-    consoleStreamOwner = null;
   }
 
   function stop() {
@@ -419,11 +415,6 @@ async function handleChat(ws, message) {
           "request id": requestId,
         });
 
-        if (consoleStreamOwner === null) {
-          consoleStreamOwner = requestId;
-          logStreamHeader();
-        }
-
         send(ws, {
           type: "started",
           requestId,
@@ -431,10 +422,6 @@ async function handleChat(ws, message) {
       },
 
       onChunk: (chunk) => {
-        if (consoleStreamOwner === requestId) {
-          process.stdout.write(chunk);
-        }
-
         send(ws, {
           type: "chunk",
           requestId,
@@ -465,11 +452,6 @@ async function handleChat(ws, message) {
 
     const completedAt = performance.now();
 
-    if (consoleStreamOwner === requestId) {
-      logStreamFooter();
-      consoleStreamOwner = null;
-    }
-
     logEvent("LOCAL COMPLETE", {
       primary: model,
       "request id": requestId,
@@ -490,11 +472,6 @@ async function handleChat(ws, message) {
     if (controller.signal.aborted) {
       const cancelledAt = performance.now();
 
-      if (consoleStreamOwner === requestId) {
-        logStreamFooter();
-        consoleStreamOwner = null;
-      }
-
       logEvent("LOCAL CANCELLED", {
         primary: model,
         "request id": requestId,
@@ -511,11 +488,6 @@ async function handleChat(ws, message) {
     }
 
     const failedAt = performance.now();
-
-    if (consoleStreamOwner === requestId) {
-      logStreamFooter();
-      consoleStreamOwner = null;
-    }
 
     logError("LOCAL ERROR", {
       primary: model,
