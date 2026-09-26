@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import { chatWithOllama } from "./endpoints/ollama.js";
 
 const activeRequests = new Map();
+const AUTH_TIMEOUT_MS = 10_000;
 
 export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
   if (!magiUrl) {
@@ -26,21 +27,47 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
 
     const url = new URL(magiUrl);
 
-    ws = new WebSocket(url);
+    const connection = new WebSocket(url);
+    ws = connection;
 
-    ws.on("open", () => {
-      reconnectAttempts = 0;
+    let authTimer = null;
+    let authenticated = false;
 
+    function clearAuthTimer() {
+      if (!authTimer) return;
+
+      clearTimeout(authTimer);
+      authTimer = null;
+    }
+
+    connection.on("open", () => {
       console.log("MAGI CONNECTION..... CONNECTED");
 
-      send(ws, {
+      send(connection, {
         type: "authenticate",
         deviceId,
         credential,
       });
+
+      authTimer = setTimeout(() => {
+        authTimer = null;
+
+        if (
+          stopped ||
+          authenticated ||
+          connection !== ws ||
+          connection.readyState !== WebSocket.OPEN
+        ) {
+          return;
+        }
+
+        console.error("MAGI AUTH............ TIMEOUT");
+
+        connection.terminate();
+      }, AUTH_TIMEOUT_MS);
     });
 
-    ws.on("message", async (data) => {
+    connection.on("message", async (data) => {
       let message;
 
       try {
@@ -51,6 +78,14 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
       }
 
       if (message.type === "ready") {
+        if (connection !== ws) {
+          return;
+        }
+
+        authenticated = true;
+        clearAuthTimer();
+        reconnectAttempts = 0;
+
         console.log("PAIRING............. VERIFIED");
         console.log(`DEVICE.............. ${message.deviceId}`);
 
@@ -64,7 +99,7 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
           });
         }
 
-        send(ws, {
+        send(connection, {
           type: "capabilities",
           endpoints,
         });
@@ -74,8 +109,12 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
         return;
       }
 
+      if (connection !== ws || !authenticated) {
+        return;
+      }
+
       if (message.type === "chat") {
-        await handleChat(ws, message);
+        await handleChat(connection, message);
         return;
       }
 
@@ -87,12 +126,8 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
       console.log(`MAGI MESSAGE......... ${message.type ?? "UNKNOWN"}`);
     });
 
-    ws.on("close", (code, reason) => {
-      for (const controller of activeRequests.values()) {
-        controller.abort();
-      }
-
-      activeRequests.clear();
+    connection.on("close", (code, reason) => {
+      clearAuthTimer();
 
       const reasonText = reason.toString();
 
@@ -101,6 +136,13 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
           reasonText ? `: ${reasonText}` : ""
         })`,
       );
+
+      // Ignore lifecycle events from an obsolete connection.
+      if (connection !== ws) {
+        return;
+      }
+
+      abortActiveRequests();
 
       if (code === 1008) {
         console.error("NERV AUTH............ FAILED");
@@ -114,7 +156,7 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
       }
     });
 
-    ws.on("error", (error) => {
+    connection.on("error", (error) => {
       console.error(`MAGI CONNECTION..... ERROR: ${error.message}`);
     });
   }
@@ -134,6 +176,14 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
     }, delay);
   }
 
+  function abortActiveRequests() {
+    for (const controller of activeRequests.values()) {
+      controller.abort();
+    }
+
+    activeRequests.clear();
+  }
+
   function stop() {
     stopped = true;
 
@@ -142,11 +192,7 @@ export function connectToMagi({ magiUrl, deviceId, credential, ollama }) {
       reconnectTimer = null;
     }
 
-    for (const controller of activeRequests.values()) {
-      controller.abort();
-    }
-
-    activeRequests.clear();
+    abortActiveRequests();
 
     if (
       ws?.readyState === WebSocket.OPEN ||
@@ -169,31 +215,29 @@ async function handleChat(ws, message) {
   if (!requestId) return;
 
   if (endpointId !== "ollama-default") {
-    send(ws, {
-      type: "error",
+    sendError(
+      ws,
       requestId,
-      error: `Unsupported local endpoint: ${endpointId}`,
-    });
+      `Unsupported local endpoint: ${endpointId}`,
+      "LOCAL_ENDPOINT_UNSUPPORTED",
+    );
 
     return;
   }
 
   if (!model) {
-    send(ws, {
-      type: "error",
-      requestId,
-      error: "Local model is required",
-    });
+    sendError(ws, requestId, "Local model is required", "LOCAL_MODEL_REQUIRED");
 
     return;
   }
 
   if (activeRequests.has(requestId)) {
-    send(ws, {
-      type: "error",
+    sendError(
+      ws,
       requestId,
-      error: "Duplicate local request ID",
-    });
+      "Duplicate local request ID",
+      "LOCAL_DUPLICATE_REQUEST",
+    );
 
     return;
   }
@@ -263,11 +307,12 @@ async function handleChat(ws, message) {
 
     console.error(`LOCAL ERROR.......... ${model}: ${error.message}`);
 
-    send(ws, {
-      type: "error",
+    sendError(
+      ws,
       requestId,
-      error: error.message,
-    });
+      error.message || "Local inference failed",
+      "LOCAL_INFERENCE_ERROR",
+    );
   } finally {
     activeRequests.delete(requestId);
   }
@@ -285,6 +330,15 @@ function handleCancel(message) {
   if (!controller) return;
 
   controller.abort();
+}
+
+function sendError(ws, requestId, message, code) {
+  send(ws, {
+    type: "error",
+    requestId,
+    message,
+    code,
+  });
 }
 
 function send(ws, message) {
