@@ -42,6 +42,8 @@ export function logEvent(label, details = {}) {
 
     console.log(`               ${formatLabel(key)}${formatValue(value)}`);
   }
+
+  console.log("");
 }
 
 export function logError(label, details = {}) {
@@ -54,6 +56,8 @@ export function logError(label, details = {}) {
 
     console.error(`               ${formatLabel(key)}${formatValue(value)}`);
   }
+
+  console.error("");
 }
 
 export { formatDuration };

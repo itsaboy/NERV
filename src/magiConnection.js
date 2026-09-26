@@ -1,10 +1,6 @@
 import WebSocket from "ws";
 import { chatWithOllama } from "./endpoints/ollama.js";
-import {
-  formatDuration,
-  logError,
-  logEvent,
-} from "./logger.js";
+import { formatDuration, logError, logEvent } from "./logger.js";
 
 const activeRequests = new Map();
 const AUTH_TIMEOUT_MS = 10_000;
@@ -385,8 +381,6 @@ async function handleChat(ws, message) {
 
   activeRequests.set(requestId, controller);
 
-  console.log("");
-
   logEvent("LOCAL REQUEST", {
     primary: model,
     "request id": requestId,
@@ -466,8 +460,6 @@ async function handleChat(ws, message) {
       "output tokens": result.usage?.outputTokens,
       "total tokens": result.usage?.totalTokens,
     });
-
-    console.log("");
   } catch (error) {
     if (controller.signal.aborted) {
       const cancelledAt = performance.now();
