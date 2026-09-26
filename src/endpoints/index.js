@@ -2,6 +2,8 @@ import { inspectOllama, chatWithOllama } from "./ollama.js";
 
 import { inspectLmStudio, chatWithLmStudio } from "./lmStudio.js";
 
+import { inspectLlamaCpp, chatWithLlamaCpp } from "./llamaCpp.js";
+
 export const localEndpoints = [
   {
     endpointId: "ollama-default",
@@ -14,6 +16,12 @@ export const localEndpoints = [
     provider: "lmstudio",
     inspect: inspectLmStudio,
     chat: chatWithLmStudio,
+  },
+  {
+    endpointId: "llamacpp-default",
+    provider: "llamacpp",
+    inspect: inspectLlamaCpp,
+    chat: chatWithLlamaCpp,
   },
 ];
 
