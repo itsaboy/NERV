@@ -9,7 +9,7 @@ import {
 } from "./logger.js";
 
 const activeRequests = new Map();
-
+let consoleStreamOwner = null;
 const AUTH_TIMEOUT_MS = 10_000;
 const CAPABILITY_REFRESH_MS = 5_000;
 
@@ -319,6 +319,7 @@ export function connectToMagi({
     }
 
     activeRequests.clear();
+    consoleStreamOwner = null;
   }
 
   function stop() {
@@ -398,8 +399,6 @@ async function handleChat(ws, message) {
     "magi phase": formatMagiPhase(context?.phase),
   });
 
-  logStreamHeader();
-
   try {
     const result = await chatWithOllama({
       model,
@@ -420,6 +419,11 @@ async function handleChat(ws, message) {
           "request id": requestId,
         });
 
+        if (consoleStreamOwner === null) {
+          consoleStreamOwner = requestId;
+          logStreamHeader();
+        }
+
         send(ws, {
           type: "started",
           requestId,
@@ -427,7 +431,9 @@ async function handleChat(ws, message) {
       },
 
       onChunk: (chunk) => {
-        process.stdout.write(chunk);
+        if (consoleStreamOwner === requestId) {
+          process.stdout.write(chunk);
+        }
 
         send(ws, {
           type: "chunk",
@@ -459,7 +465,10 @@ async function handleChat(ws, message) {
 
     const completedAt = performance.now();
 
-    logStreamFooter();
+    if (consoleStreamOwner === requestId) {
+      logStreamFooter();
+      consoleStreamOwner = null;
+    }
 
     logEvent("LOCAL COMPLETE", {
       primary: model,
@@ -481,7 +490,10 @@ async function handleChat(ws, message) {
     if (controller.signal.aborted) {
       const cancelledAt = performance.now();
 
-      logStreamFooter();
+      if (consoleStreamOwner === requestId) {
+        logStreamFooter();
+        consoleStreamOwner = null;
+      }
 
       logEvent("LOCAL CANCELLED", {
         primary: model,
@@ -500,7 +512,10 @@ async function handleChat(ws, message) {
 
     const failedAt = performance.now();
 
-    logStreamFooter();
+    if (consoleStreamOwner === requestId) {
+      logStreamFooter();
+      consoleStreamOwner = null;
+    }
 
     logError("LOCAL ERROR", {
       primary: model,
